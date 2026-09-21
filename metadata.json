@@ -1,0 +1,10 @@
+{
+  "name": "Remix JARVIS Cognitive OS",
+  "description": "Deterministic, permission-gated cognitive operating system featuring capability boundaries, dispatch predicate safety gates, cryptographic audit hash chaining, situational incident intelligence, and neural multi-turn assistance with search grounding and speech transcription.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

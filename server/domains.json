@@ -1,0 +1,121 @@
+{
+  "$schema": "./domains.schema.json",
+  "version": "1.0.0",
+  "domains": [
+    {
+      "id": "incident_intelligence",
+      "label": "Incident Intelligence & Situational Fusion",
+      "archetype": "Tactical Sensor Fusion & Radar",
+      "status": "live",
+      "tier": "advisory",
+      "backing": [
+        "core.earthquake_intelligence:EarthquakeFeed",
+        "core.wildfire_intelligence:WildfireFeed",
+        "core.aircraft_intelligence:ADSBFeed"
+      ],
+      "detectors": ["_detect_intel", "_detect_hazard", "_detect_seismic", "_detect_airspace"],
+      "note": "Live telemetry from USGS, NASA FIRMS, and ADSB-lol normalized to situational cache.",
+      "gap": "No raw RF spectrum or direct radar hardware.",
+      "alternative": "Use external authenticated aggregator feeds."
+    },
+    {
+      "id": "system_proactivity",
+      "label": "Proactive Health & Telemetry Defense",
+      "archetype": "Self-Diagnostic Subroutines",
+      "status": "live",
+      "tier": "autonomous",
+      "backing": [
+        "core.capabilities:watch_health",
+        "core.health_actions:remediate"
+      ],
+      "detectors": ["_detect_diagnostics", "_detect_health", "_detect_watchdog"],
+      "note": "Timer-polled signature-diff loop with local component isolation (max 3 actions/hour rate limit).",
+      "gap": "Predictive user-intent anticipation not supported.",
+      "alternative": "Explicit reactive task scheduling via executive worker."
+    },
+    {
+      "id": "environmental_control",
+      "label": "Environmental Automation",
+      "archetype": "Malibu Estate Control",
+      "status": "simulated",
+      "tier": "approval_required",
+      "backing": [
+        "infrastructure.tools.device_control:DeviceStateStore"
+      ],
+      "detectors": ["_detect_device_control", "_detect_lights", "_detect_climate", "_detect_gates"],
+      "note": "In-memory state store only. Commands update internal representation.",
+      "gap": "No physical Home Assistant, Matter, or BACnet broker connected.",
+      "alternative": "Connect standard MQTT/Home Assistant broker before changing tier to live."
+    },
+    {
+      "id": "combat_and_flight_dynamics",
+      "label": "Kinetic Defense & Flight Systems",
+      "archetype": "Suit Flight & Weapon Controls",
+      "status": "no_deployment_surface",
+      "tier": "refuse",
+      "backing": [],
+      "detectors": ["_detect_mcu_combat", "_detect_flight_controls", "_detect_weapons", "_detect_repulsors"],
+      "note": "Permanent refusal. System maintains zero operational hooks to physical weapons or avionics.",
+      "gap": "Domain exists solely as fictional narrative.",
+      "alternative": "Use defense and flight simulations in offline synthetic environments."
+    },
+    {
+      "id": "code_sandbox",
+      "label": "Isolated Computational Sandbox",
+      "archetype": "Docker Container Runner",
+      "status": "limited",
+      "tier": "approval_required",
+      "backing": [
+        "security.sandbox.docker_runner:CodeBox"
+      ],
+      "detectors": ["_detect_code_exec", "_detect_sandbox_run", "_detect_script"],
+      "note": "Hardened container environment with read-only rootfs, 512MB RAM cap, and zero host network access.",
+      "gap": "No host filesystem access or unrestricted egress networking.",
+      "alternative": "Use provisioned CI/CD runner pipelines for external build artifacts."
+    },
+    {
+      "id": "audio_pipeline",
+      "label": "Acoustic Transcription & VAD",
+      "archetype": "Whisper Speech Ingestion",
+      "status": "limited",
+      "tier": "advisory",
+      "backing": [
+        "perception.audio.vad:WebRtcVad",
+        "perception.audio.transcribe:FasterWhisper"
+      ],
+      "detectors": ["_detect_audio_stream", "_detect_voice_command"],
+      "note": "Local beamforming capture processed via WebRTC VAD and quantized Whisper transcription.",
+      "gap": "Voice verification is uncertified; lacks cryptographically binding biometric identity.",
+      "alternative": "Authenticate via explicit hardware security key or 2FA session token."
+    },
+    {
+      "id": "tactical_hud_control",
+      "label": "Cyber HUD Matrix Telemetry",
+      "archetype": "Operational Holographic Interface",
+      "status": "live",
+      "tier": "autonomous",
+      "backing": [
+        "interfaces.hud:WebInterfaceStream",
+        "core.events:SocketBroadcaster"
+      ],
+      "detectors": ["_detect_hud_view", "_detect_display_mode"],
+      "note": "Sub-millisecond state broadcasting over secure duplex transport.",
+      "gap": "Volumetric photon rendering requires physical projection hardware.",
+      "alternative": "Render via high-contrast WebGL/SVG HUD canvas."
+    },
+    {
+      "id": "telegram_gateway",
+      "label": "Telegram Remote Gateway & Preflight",
+      "archetype": "Out-of-Band 2FA Sentinel",
+      "status": "simulated",
+      "tier": "approval_required",
+      "backing": [
+        "interfaces.telegram:PreflightBot"
+      ],
+      "detectors": ["_detect_remote_escalation", "_detect_telegram_sync"],
+      "note": "Escalation channel simulating out-of-band operator challenge/response signatures.",
+      "gap": "Production bot token not bound to live Telegram webhook.",
+      "alternative": "Provide TELEGRAM_BOT_TOKEN to transition from simulated to live tier."
+    }
+  ]
+}
