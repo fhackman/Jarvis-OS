@@ -10,7 +10,8 @@ import {
   XCircle,
   FileCode,
   Layers,
-  Database
+  Database,
+  Download
 } from 'lucide-react';
 import { AuditBlock, AuditVerificationResult } from '../types/jarvis';
 
@@ -62,6 +63,31 @@ export const AuditTrailExplorer: React.FC<AuditTrailExplorerProps> = ({
     setVerification(res);
   };
 
+  const handleExportJSON = () => {
+    const exportData = {
+      system: 'JARVIS-COGNITIVE-OS',
+      specification: 'Section 6 Cryptographic Append-Only Hash Chain',
+      exported_at: new Date().toISOString(),
+      total_blocks: chain.length,
+      merkle_root: merkleRoot,
+      verification_algorithm: 'SHA-256',
+      hash_formula: 'SHA256(`${index}:${timestamp}:${eventType}:${JSON.stringify(payload)}:${prevHash}`)',
+      chain: chain,
+    };
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.href = url;
+    downloadAnchor.download = `jarvis-audit-chain-${Date.now()}.json`;
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+
+    setActionMessage(`Cryptographic audit hash chain (${chain.length} blocks) exported as JSON for external verification.`);
+  };
+
   return (
     <div className="space-y-4 font-mono">
       {/* Header Banner */}
@@ -92,6 +118,18 @@ export const AuditTrailExplorer: React.FC<AuditTrailExplorerProps> = ({
           >
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>VERIFY CHAIN INTEGRITY</span>
+          </button>
+
+          <button
+            type="button"
+            id="export-chain-btn"
+            onClick={handleExportJSON}
+            disabled={loading || chain.length === 0}
+            className="px-3 py-1.5 rounded text-xs font-semibold border border-cyan-700/70 bg-cyan-950/40 text-cyan-300 hover:bg-cyan-900/50 hover:text-white flex items-center gap-1.5 transition-colors"
+            title="Export current cryptographic hash chain as JSON for external verification"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>EXPORT JSON</span>
           </button>
 
           <button

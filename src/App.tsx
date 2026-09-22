@@ -9,6 +9,12 @@ import { SituationalRadar } from './components/SituationalRadar';
 import { DeviceStorePanel } from './components/DeviceStorePanel';
 import { VerificationContractsPanel } from './components/VerificationContractsPanel';
 import { NeuralChatPanel } from './components/NeuralChatPanel';
+import { SystemDiagnosticsDrawer } from './components/SystemDiagnosticsDrawer';
+import { SystemLogsView } from './components/SystemLogsView';
+import { 
+  DashboardResourceWarningBanner, 
+  ToastAlertContainer 
+} from './components/ThresholdAlertsBanner';
 import { 
   ActionProposal, 
   AuditBlock, 
@@ -21,12 +27,44 @@ import {
   SeismicEvent, 
   WildfireEvent, 
   AircraftTelemetry,
-  VerificationContractTest
+  VerificationContractTest,
+  DiagnosticThresholds,
+  ThresholdAlert,
+  SystemDiagnosticsData
 } from './types/jarvis';
+import { 
+  DEFAULT_THRESHOLDS, 
+  loadThresholds, 
+  saveThresholds, 
+  evaluateThresholds, 
+  playAlertBeep 
+} from './utils/thresholds';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('terminal');
   const [loading, setLoading] = useState<boolean>(false);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState<boolean>(false);
+
+  // Diagnostics Watchdog & Threshold Policies
+  const [thresholds, setThresholds] = useState<DiagnosticThresholds>(() => loadThresholds());
+  const [activeThresholdAlert, setActiveThresholdAlert] = useState<ThresholdAlert | null>(null);
+  const [thresholdToasts, setThresholdToasts] = useState<ThresholdAlert[]>([]);
+  const [lastAlertTime, setLastAlertTime] = useState<number>(0);
+  const [snoozedUntil, setSnoozedUntil] = useState<number>(0);
+  const [latestDiagnostics, setLatestDiagnostics] = useState<SystemDiagnosticsData | null>(null);
+
+  const handleUpdateThresholds = (newThresholds: DiagnosticThresholds) => {
+    setThresholds(newThresholds);
+    saveThresholds(newThresholds);
+    if (latestDiagnostics) {
+      const { alert } = evaluateThresholds(
+        latestDiagnostics.summary.currentCpu,
+        latestDiagnostics.summary.currentMemoryMb,
+        newThresholds
+      );
+      setActiveThresholdAlert(alert);
+    }
+  };
 
   // Core System State
   const [domains, setDomains] = useState<DomainDefinition[]>([]);
@@ -85,6 +123,97 @@ export default function App() {
     const interval = setInterval(fetchAllData, 10000); // 10s telemetry heartbeat
     return () => clearInterval(interval);
   }, []);
+
+  // Dedicated Telemetry Watchdog & Threshold Evaluation
+  const syncDiagnostics = async () => {
+    try {
+      const res = await fetch('/api/diagnostics');
+      if (!res.ok) return;
+      const data: SystemDiagnosticsData = await res.json();
+      setLatestDiagnostics(data);
+
+      const { cpuExceeded, ramExceeded, alert } = evaluateThresholds(
+        data.summary.currentCpu,
+        data.summary.currentMemoryMb,
+        thresholds
+      );
+
+      setActiveThresholdAlert(alert);
+
+      if (alert && thresholds.enabled && thresholds.toastAlerts) {
+        const now = Date.now();
+        const isSnoozed = now < snoozedUntil;
+        const cooldownMs = (thresholds.cooldownSeconds || 25) * 1000;
+        const cooldownPassed = now - lastAlertTime > cooldownMs;
+
+        if (!isSnoozed && cooldownPassed) {
+          setThresholdToasts((prev) => [alert, ...prev.slice(0, 2)]);
+          setLastAlertTime(now);
+          if (thresholds.soundEnabled) {
+            playAlertBeep();
+          }
+        }
+      }
+    } catch {
+      // transient telemetry error
+    }
+  };
+
+  useEffect(() => {
+    syncDiagnostics();
+    const interval = setInterval(syncDiagnostics, 5000);
+    return () => clearInterval(interval);
+  }, [thresholds, snoozedUntil, lastAlertTime]);
+
+  const handleSimulateSpike = async (type: 'cpu' | 'ram', value?: number) => {
+    try {
+      const res = await fetch('/api/diagnostics/simulate-spike', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, value }),
+      });
+      const data = await res.json();
+      if (data.diagnostics) {
+        setLatestDiagnostics(data.diagnostics);
+        const { alert } = evaluateThresholds(
+          data.diagnostics.summary.currentCpu,
+          data.diagnostics.summary.currentMemoryMb,
+          thresholds
+        );
+        setActiveThresholdAlert(alert);
+        if (alert) {
+          setThresholdToasts((prev) => [alert, ...prev.slice(0, 2)]);
+          if (thresholds.soundEnabled) {
+            playAlertBeep();
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to simulate spike:', err);
+    }
+  };
+
+  const handleTriggerTestAlert = (type: 'cpu' | 'ram' = 'cpu') => {
+    const fakeAlert: ThresholdAlert = {
+      id: `test_alert_${Date.now()}`,
+      metric: type,
+      label: type === 'cpu' ? 'Simulated CPU Threshold Breach' : 'Simulated RAM Threshold Breach',
+      currentCpu: type === 'cpu' ? 89 : 34,
+      cpuThreshold: thresholds.cpuThresholdPercent,
+      currentRam: type === 'ram' ? 96 : 48,
+      ramThreshold: thresholds.ramThresholdMb,
+      message: type === 'cpu' 
+        ? `CPU utilization surged to 89%, breaching limit (${thresholds.cpuThresholdPercent}%)`
+        : `RAM footprint surged to 96MB, breaching limit (${thresholds.ramThresholdMb}MB)`,
+      timestamp: Date.now(),
+      severity: 'warning',
+    };
+    setActiveThresholdAlert(fakeAlert);
+    setThresholdToasts((prev) => [fakeAlert, ...prev.slice(0, 2)]);
+    if (thresholds.soundEnabled) {
+      playAlertBeep();
+    }
+  };
 
   // Handlers
   const handleDispatch = async (
@@ -183,7 +312,7 @@ export default function App() {
     }
   };
 
-  const handleInjectHazard = async (type: 'seismic' | 'airspace', severity: number) => {
+  const handleInjectHazard = async (type: 'seismic' | 'wildfire' | 'airspace', severity: number) => {
     setLoading(true);
     try {
       await fetch('/api/intel/inject', {
@@ -242,10 +371,20 @@ export default function App() {
         pendingApprovalsCount={pendingApprovals.length}
         activeAlertsCount={activeAlerts.length}
         systemHealth={systemHealth}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+        hasThresholdBreach={Boolean(activeThresholdAlert)}
       />
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 space-y-6">
+        {/* Resource Threshold Watchdog Warning Banner */}
+        <DashboardResourceWarningBanner
+          alert={activeThresholdAlert}
+          thresholds={thresholds}
+          onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+          onDismiss={() => setActiveThresholdAlert(null)}
+        />
+
         {/* Global Pipeline Visualizer (always shown on terminal or approvals tab) */}
         {(activeTab === 'terminal' || activeTab === 'approvals') && (
           <PipelineVisualizer
@@ -264,8 +403,9 @@ export default function App() {
             />
 
             {/* Quick Metrics Bar */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 font-mono text-xs">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 font-mono text-xs">
               <div 
+                id="quick-metric-approvals"
                 onClick={() => setActiveTab('approvals')}
                 className="bg-slate-950/70 border border-slate-800/80 hover:border-amber-600/60 p-3 rounded-lg cursor-pointer transition-all"
               >
@@ -277,6 +417,7 @@ export default function App() {
               </div>
 
               <div 
+                id="quick-metric-audit"
                 onClick={() => setActiveTab('audit')}
                 className="bg-slate-950/70 border border-slate-800/80 hover:border-cyan-600/60 p-3 rounded-lg cursor-pointer transition-all"
               >
@@ -288,6 +429,7 @@ export default function App() {
               </div>
 
               <div 
+                id="quick-metric-radar"
                 onClick={() => setActiveTab('radar')}
                 className="bg-slate-950/70 border border-slate-800/80 hover:border-rose-600/60 p-3 rounded-lg cursor-pointer transition-all"
               >
@@ -299,6 +441,7 @@ export default function App() {
               </div>
 
               <div 
+                id="quick-metric-chat"
                 onClick={() => setActiveTab('chat')}
                 className="bg-slate-950/70 border border-slate-800/80 hover:border-cyan-500/60 p-3 rounded-lg cursor-pointer transition-all"
               >
@@ -307,6 +450,61 @@ export default function App() {
                   Gemini 3.5 Active
                 </div>
                 <div className="text-[10px] text-slate-500 mt-0.5">Open AI Chat &rarr;</div>
+              </div>
+
+              <div 
+                id="quick-metric-logs"
+                onClick={() => setActiveTab('logs')}
+                className="bg-slate-950/70 border border-slate-800/80 hover:border-emerald-500/60 p-3 rounded-lg cursor-pointer transition-all bg-gradient-to-br from-emerald-950/20 to-transparent"
+              >
+                <div className="text-[10px] text-emerald-400 font-semibold flex items-center justify-between">
+                  <span>SYSTEM LOGS</span>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                </div>
+                <div className="text-xl font-bold text-slate-100 mt-1">
+                  Live Stream
+                </div>
+                <div className="text-[10px] text-emerald-400/80 mt-0.5">Terminal events &rarr;</div>
+              </div>
+
+              {/* System Diagnostics Quick Metric with Dynamic Alert State */}
+              <div 
+                id="quick-metric-diagnostics"
+                onClick={() => setDiagnosticsOpen(true)}
+                className={`p-3 rounded-lg cursor-pointer transition-all border ${
+                  activeThresholdAlert
+                    ? 'bg-rose-950/40 border-rose-500/80 shadow-[0_0_15px_rgba(244,63,94,0.3)] hover:border-rose-400'
+                    : 'bg-slate-950/70 border-slate-800/80 hover:border-cyan-400/70 bg-gradient-to-br from-cyan-950/30 to-transparent'
+                }`}
+              >
+                <div className={`text-[10px] font-semibold flex items-center justify-between ${
+                  activeThresholdAlert ? 'text-rose-400' : 'text-cyan-400'
+                }`}>
+                  <span>DIAGNOSTICS</span>
+                  <span className="relative flex h-2 w-2">
+                    <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                      activeThresholdAlert ? 'bg-rose-500' : 'bg-cyan-400'
+                    }`}></span>
+                    <span className={`relative inline-flex rounded-full h-2 w-2 ${
+                      activeThresholdAlert ? 'bg-rose-500' : 'bg-cyan-500'
+                    }`}></span>
+                  </span>
+                </div>
+                <div className={`text-xl font-bold mt-1 ${
+                  activeThresholdAlert ? 'text-rose-200' : 'text-slate-100'
+                }`}>
+                  {activeThresholdAlert ? 'LIMIT EXCEEDED' : '60m Window'}
+                </div>
+                <div className={`text-[10px] mt-0.5 ${
+                  activeThresholdAlert ? 'text-rose-300 font-bold' : 'text-cyan-300'
+                }`}>
+                  {activeThresholdAlert 
+                    ? `CPU: ${activeThresholdAlert.currentCpu}% | RAM: ${activeThresholdAlert.currentRam}MB`
+                    : 'CPU • RAM • Latency →'}
+                </div>
               </div>
             </div>
           </div>
@@ -371,7 +569,12 @@ export default function App() {
           />
         )}
 
-        {/* Tab 7: Verification Contracts */}
+        {/* Tab 7: Operational System Logs */}
+        {activeTab === 'logs' && (
+          <SystemLogsView onNavigateToTab={setActiveTab} />
+        )}
+
+        {/* Tab 8: Verification Contracts */}
         {activeTab === 'contracts' && (
           <VerificationContractsPanel
             onRunTests={handleRunContracts}
@@ -379,6 +582,28 @@ export default function App() {
           />
         )}
       </main>
+
+      {/* System Diagnostics Drawer (60-minute Recharts CPU, Memory, Latency + Thresholds Watchdog) */}
+      <SystemDiagnosticsDrawer
+        isOpen={diagnosticsOpen}
+        onClose={() => setDiagnosticsOpen(false)}
+        thresholds={thresholds}
+        onUpdateThresholds={handleUpdateThresholds}
+        activeAlert={activeThresholdAlert}
+        onSimulateSpike={handleSimulateSpike}
+        onTriggerTestAlert={handleTriggerTestAlert}
+      />
+
+      {/* Floating Tactical Toast Alerts */}
+      <ToastAlertContainer
+        toasts={thresholdToasts}
+        onOpenDiagnostics={() => setDiagnosticsOpen(true)}
+        onDismissToast={(id) => setThresholdToasts((prev) => prev.filter((t) => t.id !== id))}
+        onSnoozeToasts={() => {
+          setSnoozedUntil(Date.now() + 5 * 60 * 1000);
+          setThresholdToasts([]);
+        }}
+      />
 
       {/* Footer & Governing Equation */}
       <footer className="border-t border-slate-900 bg-[#020509] p-4 text-center font-mono text-[11px] text-slate-500">

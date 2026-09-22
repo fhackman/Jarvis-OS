@@ -6,12 +6,15 @@
 
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { dispatchPredicate } from './server/dispatch.ts';
 import { auditChain } from './server/audit.ts';
 import { incidentFusion } from './server/intel.ts';
 import { deviceStore } from './server/devices.ts';
 import { intentRouter } from './server/router.ts';
+import { diagnosticsTracker } from './server/diagnostics.ts';
+import { systemLogger } from './server/logger.ts';
 import { ActionProposal, VerificationContractTest } from './src/types/jarvis.ts';
 import { executeMultiTurnChat, transcribeAudioWithGemini } from './server/gemini.ts';
 
@@ -20,6 +23,38 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json({ limit: '25mb' }));
+
+  // Operational Request Logger Middleware
+  app.use((req, res, next) => {
+    // Only intercept /api routes, skipping high-frequency asset/stream paths
+    if (!req.path.startsWith('/api') || req.path.startsWith('/api/geo') || req.path === '/api/logs/stream') {
+      return next();
+    }
+
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      const status = res.statusCode;
+
+      if (status >= 400) {
+        systemLogger.error('API', 'http_gateway', `${req.method} ${req.path} failed with HTTP ${status} in ${duration}ms.`, {
+          method: req.method,
+          path: req.path,
+          status,
+          duration_ms: duration,
+        });
+      } else if (req.method !== 'GET' || req.path === '/api/health') {
+        systemLogger.info('API', 'http_gateway', `${req.method} ${req.path} -> HTTP ${status} (${duration}ms)`, {
+          method: req.method,
+          path: req.path,
+          status,
+          duration_ms: duration,
+        });
+      }
+    });
+
+    next();
+  });
 
   // ==========================================
   // API ROUTES (Must precede Vite middleware)
@@ -41,6 +76,107 @@ async function startServer() {
         situational_radar: 'synced',
       },
     });
+  });
+
+  // 1.5 System Diagnostics & 60-Minute Telemetry Window
+  app.get('/api/diagnostics', (req, res) => {
+    res.json(diagnosticsTracker.getDiagnostics());
+  });
+
+  app.post('/api/diagnostics/test-pulse', (req, res) => {
+    const sampleLatencies = [6, 12, 28, 145, 9, 32];
+    const latency = sampleLatencies[Math.floor(Math.random() * sampleLatencies.length)];
+    diagnosticsTracker.recordDispatch(
+      latency,
+      'diagnostics_heartbeat_probe',
+      'system_telemetry',
+      'allow'
+    );
+    res.json({ success: true, latency_ms: latency, diagnostics: diagnosticsTracker.getDiagnostics() });
+  });
+
+  app.post('/api/diagnostics/simulate-spike', (req, res) => {
+    const { type = 'cpu', value } = req.body;
+    const diagnostics = diagnosticsTracker.simulateSpike(type, value);
+    const metricLabel = type === 'cpu' ? `CPU Utilization spiked to ${diagnostics.summary.currentCpu}%` : `Heap RAM spiked to ${diagnostics.summary.currentMemoryMb}MB`;
+    systemLogger.warn(
+      'SYSTEM',
+      'diagnostics_watchdog',
+      `RESOURCE LIMIT WARNING: ${metricLabel} (Threshold Monitoring Active).`,
+      { type, current_value: type === 'cpu' ? diagnostics.summary.currentCpu : diagnostics.summary.currentMemoryMb }
+    );
+    res.json({ success: true, type, diagnostics });
+  });
+
+  // 1.8 Geographic TopoJSON for Situational Geospatial Map
+  app.get('/api/geo/us-states', (req, res) => {
+    const filePath = path.join(process.cwd(), 'node_modules/us-atlas/states-10m.json');
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'application/json');
+      return fs.createReadStream(filePath).pipe(res);
+    }
+    res.status(404).json({ error: 'us-states topojson not found' });
+  });
+
+  app.get('/api/geo/world', (req, res) => {
+    const filePath = path.join(process.cwd(), 'node_modules/world-atlas/countries-110m.json');
+    if (fs.existsSync(filePath)) {
+      res.setHeader('Content-Type', 'application/json');
+      return fs.createReadStream(filePath).pipe(res);
+    }
+    res.status(404).json({ error: 'world topojson not found' });
+  });
+
+  // 1.9 System Logs & Real-Time Operational Terminal Stream
+  app.get('/api/logs', (req, res) => {
+    const { level, category, search, limit } = req.query;
+    const logs = systemLogger.getLogs({
+      level: level as string,
+      category: category as string,
+      search: search as string,
+      limit: limit ? parseInt(limit as string, 10) : 250,
+    });
+    res.json({
+      success: true,
+      total: logs.length,
+      subscribers: systemLogger.getSubscriberCount(),
+      logs,
+    });
+  });
+
+  app.get('/api/logs/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    // Send initial handshake
+    res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: Date.now() })}\n\n`);
+
+    const unsubscribe = systemLogger.subscribe((logEvent) => {
+      res.write(`data: ${JSON.stringify(logEvent)}\n\n`);
+    });
+
+    // Keepalive ping every 15 seconds
+    const interval = setInterval(() => {
+      res.write(': ping\n\n');
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(interval);
+      unsubscribe();
+    });
+  });
+
+  app.post('/api/logs/simulate', (req, res) => {
+    const { type = 'dispatch_success' } = req.body;
+    const event = systemLogger.simulateEvent(type);
+    res.json({ success: true, event });
+  });
+
+  app.post('/api/logs/clear', (req, res) => {
+    systemLogger.clear();
+    res.json({ success: true });
   });
 
   // 2. Domain Manifest Registry (Section 3.2)
@@ -72,11 +208,36 @@ async function startServer() {
       // Step 2: Deterministic Dispatch Predicate Evaluation
       const result = dispatchPredicate.evaluate(proposal);
 
+      // Operational event logging
+      if (result.decision === 'allow') {
+        systemLogger.success(
+          'DISPATCH',
+          'dispatch_pipeline',
+          `Query "${query}" executed: [${proposal.action}] on ${proposal.tool_name} (${result.latency_ms}ms).`,
+          { query, tool: proposal.tool_name, action: proposal.action, latency_ms: result.latency_ms }
+        );
+      } else if (result.decision === 'propose') {
+        systemLogger.warn(
+          'AUTH_GATE',
+          'dispatch_gatekeeper',
+          `Query "${query}" halted at 2FA Gate: Domain '${proposal.domain_id}' requires dual-key signature.`,
+          { query, domain_id: proposal.domain_id, reason: result.reason }
+        );
+      } else {
+        systemLogger.error(
+          'DISPATCH',
+          'dispatch_gatekeeper',
+          `Query "${query}" DENIED: ${result.reason}`,
+          { query, reason: result.reason }
+        );
+      }
+
       res.json({
         proposal,
         result,
       });
     } catch (err: any) {
+      systemLogger.error('API', 'dispatch_handler', `Dispatch pipeline exception: ${err.message}`);
       res.status(500).json({ error: err.message || 'Dispatch evaluation failed' });
     }
   });
@@ -93,8 +254,15 @@ async function startServer() {
       const { id } = req.params;
       const { approver_id = 'operator_alpha' } = req.body;
       const result = dispatchPredicate.approveProposal(id, approver_id);
+      systemLogger.success(
+        'STATUS_CHANGE',
+        'approval_gate',
+        `Proposal ${id} approved by ${approver_id}: 2FA Gate cleared.`,
+        { proposal_id: id, approver: approver_id }
+      );
       res.json({ success: true, result });
     } catch (err: any) {
+      systemLogger.error('API', 'approval_gate', `Failed to approve proposal ${req.params.id}: ${err.message}`);
       res.status(400).json({ error: err.message });
     }
   });
@@ -104,8 +272,15 @@ async function startServer() {
       const { id } = req.params;
       const { reason = 'Rejected by operator in HUD', approver_id = 'operator_alpha' } = req.body;
       const success = dispatchPredicate.rejectProposal(id, reason, approver_id);
+      systemLogger.warn(
+        'STATUS_CHANGE',
+        'approval_gate',
+        `Proposal ${id} rejected by ${approver_id}: "${reason}".`,
+        { proposal_id: id, reason, approver: approver_id }
+      );
       res.json({ success });
     } catch (err: any) {
+      systemLogger.error('API', 'approval_gate', `Failed to reject proposal ${req.params.id}: ${err.message}`);
       res.status(400).json({ error: err.message });
     }
   });
@@ -120,17 +295,33 @@ async function startServer() {
 
   app.post('/api/audit/verify', (req, res) => {
     const verification = auditChain.verifyChain();
+    if (verification.valid) {
+      systemLogger.success('CRYPTO_AUDIT', 'audit_chain', `Hash chain verification PASSED across ${verification.block_count} blocks. Merkle root validated.`, {
+        blocks: verification.block_count,
+        merkle_root: verification.merkle_root,
+      });
+    } else {
+      systemLogger.error('CRYPTO_AUDIT', 'audit_chain', `Hash chain integrity VIOLATION detected at block #${verification.failed_at_index}! Chain broken.`, {
+        broken_block: verification.failed_at_index,
+        error: verification.error_message,
+      });
+    }
     res.json(verification);
   });
 
   app.post('/api/audit/tamper', (req, res) => {
-    const { block_index } = req.body;
-    const result = auditChain.simulateTamper(block_index || 1);
+    const { block_index = 1 } = req.body;
+    const result = auditChain.simulateTamper(block_index);
+    systemLogger.error('CRYPTO_AUDIT', 'audit_chain', `SECURITY ALERT: Simulated block tamper injected at block #${block_index}. Hash chain invalid.`, {
+      block_index,
+      tampered_data: 'MALICIOUS_SIMULATED_MUTATION',
+    });
     res.json(result);
   });
 
   app.post('/api/audit/restore', (req, res) => {
     const result = auditChain.restoreChain();
+    systemLogger.success('CRYPTO_AUDIT', 'audit_chain', 'Hash chain restored from canonical ledger snapshot. Cryptographic consensus reinstated.');
     res.json(result);
   });
 
@@ -142,6 +333,11 @@ async function startServer() {
   app.post('/api/intel/inject', (req, res) => {
     const { type = 'seismic', severity = 5.2 } = req.body;
     const alert = incidentFusion.injectHazardEvent(type, severity);
+    systemLogger.warn('PERCEPTION', 'intel_fusion', `Hazard event injected: [${type.toUpperCase()}] with severity/value ${severity}. Thresholds evaluated.`, {
+      hazard_type: type,
+      severity,
+      alert_id: alert?.id,
+    });
     res.json({
       injected: true,
       alert,
@@ -179,6 +375,16 @@ async function startServer() {
     };
 
     const result = dispatchPredicate.evaluate(proposal);
+
+    if (result.decision === 'allow') {
+      systemLogger.info('STATUS_CHANGE', 'device_store', `Device '${device.name}' (${id}) mutated: ${JSON.stringify(state_update)}.`, {
+        device_id: id,
+        update: state_update,
+      });
+    } else {
+      systemLogger.warn('AUTH_GATE', 'device_store', `Device mutation for '${device.name}' (${id}) gated: dual-key approval required.`);
+    }
+
     res.json({ proposal, result });
   });
 

@@ -14,6 +14,7 @@ import {
 } from '../src/types/jarvis.ts';
 import { auditChain } from './audit.ts';
 import { deviceStore } from './devices.ts';
+import { diagnosticsTracker } from './diagnostics.ts';
 import domainsManifest from './domains.json';
 
 const OPERATOR_HMAC_SECRET = process.env.OPERATOR_KEY || 'JARVIS_OPERATOR_ROOT_KEY_SECURE_HMAC';
@@ -72,6 +73,16 @@ class DispatchPredicate {
       .digest('hex');
   }
 
+  private recordAndReturn(proposal: ActionProposal, result: DispatchResult): DispatchResult {
+    diagnosticsTracker.recordDispatch(
+      result.latency_ms,
+      proposal.action,
+      proposal.domain_id,
+      result.decision
+    );
+    return result;
+  }
+
   /**
    * Deterministic Dispatch Predicate Evaluation
    * Strictly implementing Section 4.1 Specification
@@ -93,13 +104,13 @@ class DispatchPredicate {
 
       const alternative = domain?.alternative || 'Use offline synthetic modeling and safe sandboxed simulations.';
 
-      return {
+      return this.recordAndReturn(proposal, {
         decision: 'refuse',
         proposal,
         reason: `HARD REFUSAL: Domain [${proposal.domain_id}] is permanently designated 'no_deployment_surface'. Zero operational effectors connect to physical weapons, kinetics, or life-support.`,
         alternative,
         latency_ms: Math.round(performance.now() - startTime),
-      };
+      });
     }
 
     // 2. Advisory actions (Read-only queries, telemetry, sensor checks)
@@ -112,13 +123,13 @@ class DispatchPredicate {
         tier: 'advisory',
       });
 
-      return {
+      return this.recordAndReturn(proposal, {
         decision: 'allow',
         proposal,
         reason: 'Advisory telemetry query permitted under read-only policy tier.',
         block_index: block.index,
         latency_ms: Math.round(performance.now() - startTime),
-      };
+      });
     }
 
     // 3. Autonomous actions (Pre-approved closed-loop operations with rate limits)
@@ -134,13 +145,13 @@ class DispatchPredicate {
           hourly_actions_consumed: this.autonomousActionTimestamps.length,
         });
 
-        return {
+        return this.recordAndReturn(proposal, {
           decision: 'allow',
           proposal,
           reason: `Autonomous action approved under closed-loop rate cap (${this.autonomousActionTimestamps.length}/${this.MAX_AUTONOMOUS_PER_HOUR} actions consumed this hour).`,
           block_index: block.index,
           latency_ms: Math.round(performance.now() - startTime),
-        };
+        });
       } else {
         // Rate limit exceeded -> Escalates to Propose
         const block = auditChain.recordEvent('DISPATCH_ESCALATED_RATE_EXCEEDED', proposal.caller_id, proposal.domain_id, {
@@ -153,13 +164,13 @@ class DispatchPredicate {
 
         this.enqueuePending(proposal);
 
-        return {
+        return this.recordAndReturn(proposal, {
           decision: 'propose',
           proposal,
           reason: `Rate ceiling exceeded (>3 autonomous actions/hour). Action escalated to Operator Approval Queue.`,
           block_index: block.index,
           latency_ms: Math.round(performance.now() - startTime),
-        };
+        });
       }
     }
 
@@ -185,14 +196,14 @@ class DispatchPredicate {
           );
         }
 
-        return {
+        return this.recordAndReturn(proposal, {
           decision: 'allow',
           proposal,
           reason: 'Cryptographic operator signature validated. Permission gate dispatched action to effector.',
           execution_result: executionResult,
           block_index: block.index,
           latency_ms: Math.round(performance.now() - startTime),
-        };
+        });
       }
 
       // No signature -> Enqueue in Pending Approvals
@@ -207,21 +218,21 @@ class DispatchPredicate {
 
       this.enqueuePending(proposal);
 
-      return {
+      return this.recordAndReturn(proposal, {
         decision: 'propose',
         proposal,
         reason: `State-changing operation in domain [${domain.label}] requires explicit cryptographic operator approval.`,
         block_index: block.index,
         latency_ms: Math.round(performance.now() - startTime),
-      };
+      });
     }
 
-    return {
+    return this.recordAndReturn(proposal, {
       decision: 'refuse',
       proposal,
       reason: 'Unknown or unclassified permission tier.',
       latency_ms: Math.round(performance.now() - startTime),
-    };
+    });
   }
 
   private enqueuePending(proposal: ActionProposal) {

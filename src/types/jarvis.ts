@@ -150,3 +150,88 @@ export interface VerificationContractTest {
   metric_value?: string;
   details?: string;
 }
+
+export interface DiagnosticsTelemetryPoint {
+  timestamp: number;
+  timeLabel: string;
+  minuteOffset: number;
+  cpuPercent: number;
+  memoryMb: number;
+  memoryPercent: number;
+  heapTotalMb: number;
+  dispatchLatencyMs: number;
+  dispatchCount: number;
+  p95LatencyMs: number;
+}
+
+export interface SystemDiagnosticsData {
+  timeWindowMinutes: number;
+  metrics: DiagnosticsTelemetryPoint[];
+  summary: {
+    currentCpu: number;
+    peakCpu: number;
+    avgCpu: number;
+    currentMemoryMb: number;
+    peakMemoryMb: number;
+    avgMemoryMb: number;
+    totalDispatches60m: number;
+    avgDispatchLatencyMs: number;
+    p95DispatchLatencyMs: number;
+    maxDispatchLatencyMs: number;
+    activeProcesses: number;
+  };
+  recentDispatches: Array<{
+    id: string;
+    timestamp: number;
+    action: string;
+    domain_id: string;
+    latency_ms: number;
+    decision: DispatchDecision;
+  }>;
+}
+
+export type LogLevel = 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR';
+
+export type LogCategory =
+  | 'DISPATCH'
+  | 'API'
+  | 'AUTH_GATE'
+  | 'STATUS_CHANGE'
+  | 'PERCEPTION'
+  | 'CRYPTO_AUDIT'
+  | 'SYSTEM';
+
+export interface SystemLogEvent {
+  id: string;
+  timestamp: number;
+  iso_time: string;
+  level: LogLevel;
+  category: LogCategory;
+  message: string;
+  source: string;
+  metadata?: Record<string, any>;
+}
+
+export interface DiagnosticThresholds {
+  enabled: boolean;
+  cpuThresholdPercent: number; // e.g. 75 (%)
+  ramThresholdMb: number;       // e.g. 70 (MB)
+  toastAlerts: boolean;         // trigger toast notification
+  dashboardWarning: boolean;    // trigger dashboard banner warning
+  soundEnabled?: boolean;       // audio blip
+  cooldownSeconds?: number;     // alert debounce cooldown
+}
+
+export interface ThresholdAlert {
+  id: string;
+  metric: 'cpu' | 'ram' | 'both';
+  label: string;
+  currentCpu?: number;
+  cpuThreshold?: number;
+  currentRam?: number;
+  ramThreshold?: number;
+  message: string;
+  timestamp: number;
+  severity: 'warning' | 'critical';
+  acknowledged?: boolean;
+}

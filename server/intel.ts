@@ -246,6 +246,19 @@ class IncidentIntelligenceFusion {
       this.seismicEvents.unshift(event);
       // Force hysteresis reset for injection demonstration
       this.alertHysteresisCache.delete(`seismic_${id}`);
+    } else if (type === 'wildfire') {
+      const id = `viirs_inj_${Math.floor(Math.random() * 9000 + 1000)}`;
+      const fire: WildfireEvent = {
+        source: 'nasa_firms',
+        event_id: id,
+        frp: severityVal,
+        coordinates: [-118.5800, 34.1200],
+        confidence: 0.95,
+        place: 'Santa Monica Mountains Ridgeline, CA',
+        timestamp: now,
+      };
+      this.wildfireEvents.unshift(fire);
+      this.alertHysteresisCache.delete(`wildfire_${id}`);
     } else if (type === 'airspace') {
       const plane: AircraftTelemetry = {
         source: 'adsb_airspace',
